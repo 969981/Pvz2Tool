@@ -28,40 +28,44 @@ import android.view.Window
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import io.github.dreammooncai.manager.FilePickerManager
 import io.github.dreammooncai.pvz2tool.controller.GameDisplayFloatingController
 import io.github.dreammooncai.pvz2tool.controller.FloatingBallController
 import io.github.dreammooncai.pvz2tool.js.JsFileResolver
+import io.github.dreammooncai.pvz2tool.ui.dialog.JsUiManager
 import io.github.dreammooncai.pvz2tool.js.JsSmfDataManager
 import io.github.dreammooncai.pvz2tool.js.PvzToolJsEngine
 import io.github.dreammooncai.pvz2tool.js.code.JsDex
 import io.github.dreammooncai.pvz2tool.js.code.JsNative
 import io.github.dreammooncai.pvz2tool.js.code.JsPvz
-import io.github.dreammooncai.pvz2tool.js.code.PvzToolGlobals
 import io.github.dreammooncai.pvz2tool.ui.main.*
-import io.github.dreammooncai.pvz2tool.ui.music.rememberBackgroundMusicState
+import io.github.dreammooncai.pvz2tool.controller.PvzMusicController
 import io.github.dreammooncai.pvz2tool.view.CgVideoPlayer
 import io.github.dreammooncai.pvz2tool.ui.dialog.AssetExtractorHolder
 import io.github.dreammooncai.pvz2tool.ui.dialog.PvzExtractorDialog
@@ -176,6 +180,10 @@ class Pvz2InitializeActivity : ComponentActivity() {
                 // （versionName != mSfmVersion），init() 在 setContent 之前已执行，组合期调用安全。
                 // 避免「初始 false → 首帧先渲染 Pvz2MainScreen → LaunchedEffect 异步置 true →
                 // 切到 CG → 播完回到主界面」造成的「主界面→CG→主界面」闪现/重复显示。
+                // 「下次启动跳过工具箱」：脚本用 app.skipToolboxNextLaunch(true) 设置，
+                // 这里「读取即清除」保证只生效一次；App 更新/覆盖安装时该开关会自动失效（见 InitializePvz2）。
+                val skipToolbox = remember { InitializePvz2.consumeSkipToolboxNextLaunch() }
+
                 var showCgVideo by remember { mutableStateOf(InitializePvz2.hasVersionChanges()) }
                 var cgVideoSkipped by remember { mutableStateOf(false) }
 
@@ -185,8 +193,8 @@ class Pvz2InitializeActivity : ComponentActivity() {
                 }
 
                 if (showCgVideo) {
-                    // 重启后自动进入游戏：跳过开场 CG 视频
-                    if (autoEnterGame) {
+                    // 重启后自动进入游戏 / 跳过工具箱：跳过开场 CG 视频
+                    if (autoEnterGame || skipToolbox) {
                         LaunchedEffect(Unit) { onCgSkip() }
                     }
                     CgVideoPlayer(
@@ -207,25 +215,22 @@ class Pvz2InitializeActivity : ComponentActivity() {
                     return@Pvz2ToolTheme
                 }
 
+                // 背景音乐：地址 / 用户开关 / 前后台 三个输入统一交给 PvzMusicController 收敛。
+                // 播放器由控制器以进程内单例持有，Activity 重建、组合重组、从后台返回都不会再创建新实例，
+                // 因此不可能出现「两段背景音乐同时播放」。
                 val audioPath = InitializePvz2.config.ui.assets.resolvedBackgroundMusic
-                val audioUrl = if (audioPath.startsWith("http://") || audioPath.startsWith("https://")) {
-                    audioPath
-                } else {
-                    "file:///android_asset/${Pvz2ToolConfig.PATH_NAME}/$audioPath".toUri().toString()
-                }
-                val bgMusicState = rememberBackgroundMusicState(audioUrl, initialVolume = InitializePvz2.initialBgMusicVolume)
+                val audioUrl = if (audioPath.isBlank()) null
+                else if (audioPath.startsWith("http://") || audioPath.startsWith("https://")) audioPath
+                else "file:///android_asset/${Pvz2ToolConfig.PATH_NAME}/$audioPath".toUri().toString()
 
-                // 将 bgMusicState 注入 PvzToolGlobals，供 JS audio API 访问
-                LaunchedEffect(bgMusicState) {
-                    PvzToolGlobals.bgMusicState = bgMusicState
+                LaunchedEffect(audioUrl) {
+                    PvzMusicController.setBgmVolume(InitializePvz2.initialBgMusicVolume, persist = false)
+                    PvzMusicController.bindBgmUrl(audioUrl)
                 }
 
                 LaunchedEffect(InitializePvz2.isBgMusicOn, InitializePvz2.isAppForeground) {
-                    if (InitializePvz2.isBgMusicOn && InitializePvz2.isAppForeground) {
-                        bgMusicState.resumeWithFadeIn(fadeDuration = 1500)
-                    } else {
-                        bgMusicState.pauseWithFadeOut(fadeDuration = 1500)
-                    }
+                    PvzMusicController.setBgmEnabled(InitializePvz2.isBgMusicOn)
+                    PvzMusicController.setForeground(InitializePvz2.isAppForeground)
                 }
 
                 PvzSaveInfoDialog(importSaveInfoDialogState)
@@ -235,22 +240,27 @@ class Pvz2InitializeActivity : ComponentActivity() {
                 )
                 key(InitializePvz2.mPvz2MainScreenReloadKey) {
                     val standalone = hasIntegratorActivity()
-                    Pvz2MainScreen(
-                        onGotoGameClick = ::onGotoGame,
-                        onResetDataClick = ::onResetDataClick,
-                        onCloseToolbox = {
-                            Process.killProcess(Process.myPid())
-                            exitProcess(0)
-                        },
-                        onStateChanged = {},
-                        isStandaloneApp = standalone,
-                        onGoToIntegrator = {
-                            startActivity(Intent(this@Pvz2InitializeActivity, ToolboxIntegratorActivity::class.java))
-                        },
-                    )
+                    Box(Modifier.fillMaxSize()) {
+                        Pvz2MainScreen(
+                            onGotoGameClick = ::onGotoGame,
+                            onResetDataClick = ::onResetDataClick,
+                            onCloseToolbox = {
+                                Process.killProcess(Process.myPid())
+                                exitProcess(0)
+                            },
+                            onStateChanged = {},
+                            isStandaloneApp = standalone,
+                            onGoToIntegrator = {
+                                startActivity(Intent(this@Pvz2InitializeActivity, ToolboxIntegratorActivity::class.java))
+                            },
+                        )
+                        // 「跳过工具箱」：主界面照常组合（资源解压、栏目脚本仍会完整执行），
+                        // 只是用不透明层盖住，视觉上完全看不到工具箱。
+                        if (skipToolbox) SkipToolboxOverlay()
+                    }
                 }
-                // 重启后自动进入游戏：主界面就绪即触发「进入游戏」逻辑
-                if (autoEnterGame) {
+                // 重启后自动进入游戏 / 跳过工具箱：主界面就绪即触发「进入游戏」逻辑
+                if (autoEnterGame || skipToolbox) {
                     LaunchedEffect(Unit) { onGotoGame() }
                 }
             }
@@ -675,11 +685,32 @@ private fun SimplifiedLaunchScreen(
     private fun handleNotificationAction(intent: Intent?) {
         val action = intent?.getStringExtra("notification_action") ?: return
         if (action.isBlank()) return
-        val scope = CoroutineScope(Dispatchers.IO)
-        scope.launch {
+        JsUiManager.runUserScript {
             try {
                 PvzToolJsEngine.executeScript(action, source = "通知点击")
             } catch (_: Exception) {}
         }
     }
+
+/**
+ * 「跳过工具箱」遮罩层。
+ *
+ * 主界面仍在后台正常组合（因此资源解压、栏目脚本等完整流程照常执行），
+ * 这一层把它完全盖住，视觉上等价于「不经过工具箱、直接进游戏」。
+ */
+@Composable
+private fun SkipToolboxOverlay() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF0E1116)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("正在进入游戏…", color = Color.White, fontSize = 18.sp)
+            Spacer(Modifier.height(8.dp))
+            Text("已启用「跳过工具箱」（下次启动自动失效）", color = Color(0xFF8A9199), fontSize = 13.sp)
+        }
+    }
+}
 

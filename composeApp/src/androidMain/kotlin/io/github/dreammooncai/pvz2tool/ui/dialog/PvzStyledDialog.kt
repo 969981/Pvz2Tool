@@ -11,7 +11,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,9 +26,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -42,6 +51,7 @@ import io.github.dreammooncai.pvz2tool.view.PvzRedButton
 import io.github.dreammooncai.pvz2tool.view.PvzRichText
 import io.github.dreammooncai.pvz2tool.view.PvzTextWhiteStyle
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * PVZ 风格弹窗卡片外壳：奶黄渐变底 + 三层绿框 + 绿色标题栏。
@@ -51,6 +61,11 @@ import kotlinx.coroutines.launch
 fun PvzDialogCard(
     title: String? = null,
     modifier: Modifier = Modifier,
+    /**
+     * 标题栏右侧的操作插槽（如多选弹窗的「全选 / 搜索」按钮）。
+     * 传了内容时标题改为居中布局 + 右侧浮层，按钮不挤占标题。
+     */
+    headerTrailingContent: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit
 ) {
     Box(
@@ -70,19 +85,45 @@ fun PvzDialogCard(
             modifier = Modifier.padding(vertical = if (title != null) 10.dp else 8.dp)
         ) {
             if (title != null) {
-                // 标题栏
+                // 标题栏：标题**优先居中**；只有居中会压到右侧按钮时，才向左让出「差的那部分」。
+                // 用 onSizeChanged 量三个宽度来算位移（不能用 BoxWithConstraints：
+                // 它是 SubcomposeLayout，在本弹窗的 intrinsic 测量探测下会崩）。
+                var barWidthPx by remember { mutableIntStateOf(0) }
+                var titleWidthPx by remember { mutableIntStateOf(0) }
+                var trailingWidthPx by remember { mutableIntStateOf(0) }
+                val density = LocalDensity.current
+                val gapPx = with(density) { 8.dp.toPx() }
+
+                val centeredLeft = (barWidthPx - titleWidthPx) / 2f
+                val rightLimit = barWidthPx - trailingWidthPx - gapPx
+                // 居中时标题右缘超出按钮左缘多少 → 需要左移多少（且不超过「贴左」）
+                val overflow = centeredLeft + titleWidthPx - rightLimit
+                val shiftPx = overflow.coerceIn(0f, centeredLeft.coerceAtLeast(0f))
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Brush.verticalGradient(colors = listOf(Color(0xFF88CD23), Color(0xFF97DC02))))
-                        .padding(vertical = 15.dp),
+                        .padding(vertical = 15.dp)
+                        .onSizeChanged { barWidthPx = it.width },
                     contentAlignment = Alignment.Center
                 ) {
                     PvzRichText(
                         title,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
-                        defaultStyle = PvzTextWhiteStyle.copy(shadowColor = null)
+                        defaultStyle = PvzTextWhiteStyle.copy(shadowColor = null),
+                        modifier = Modifier
+                            .onSizeChanged { titleWidthPx = it.width }
+                            .offset { IntOffset(-shiftPx.roundToInt(), 0) }
+                    )
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 10.dp)
+                            .onSizeChanged { trailingWidthPx = it.width },
+                        verticalAlignment = Alignment.CenterVertically,
+                        content = headerTrailingContent
                     )
                 }
                 Box(modifier = Modifier.height(20.dp))
@@ -101,7 +142,6 @@ fun PvzDialogCard(
  * @param content 中间可滚动内容区域
  * @param bottomContent 底部固定内容（按钮区域）
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PvzStyledDialog(
     isVisible: Boolean,
@@ -112,6 +152,8 @@ fun PvzStyledDialog(
     verticalArrangement: Arrangement.Vertical = Arrangement.Top,
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
     forceMaxForm: Boolean = false,
+    /** 标题栏右侧操作插槽（如多选弹窗的「全选 / 搜索」） */
+    headerTrailingContent: @Composable RowScope.() -> Unit = {},
     bottomContent: @Composable (ColumnScope.() -> Unit) = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -125,7 +167,8 @@ fun PvzStyledDialog(
         ) {
             PvzDialogCard(
                 title = titleText,
-                modifier = Modifier.fillMaxWidth(0.5f)
+                modifier = Modifier.fillMaxWidth(0.5f),
+                headerTrailingContent = headerTrailingContent
             ) {
                     // 核心：和 PvzPopupContent 完全一致的 探测+滚动显示 逻辑
                     PerfectAdaptiveLayout(
@@ -211,14 +254,18 @@ fun PvzLoadingDialog(
     cancelText: String = "取消",
     cancelColor: Color? = null,
     onDismiss: (suspend () -> Unit)? = null,
-    onClose: () -> Unit,
+    onClose: suspend () -> Unit,
 ) {
     if (!isVisible) return
-    val scope = rememberCoroutineScope()
     val handleDismiss: () -> Unit = {
         if (dismissible) {
-            scope.launch { onDismiss?.invoke() }
-            onClose()
+            // 🔴 用与弹窗生命周期解耦的稳定作用域（JsUiManager.uiScope）：
+            // onDismiss 是 JS 注册的 onCancel（用户 JS），若其执行期间弹窗被关（scope 被 forget），
+            // 仍在挂起（keight jsFn.call）的协程 resume 即抛 ForgottenCoroutineScopeException；统一走 uiScope 规避。
+            JsUiManager.uiScope.launch {
+                onDismiss?.invoke()
+                onClose()
+            }
         }
     }
     Dialog(
@@ -307,7 +354,6 @@ fun PvzProgressDialog(
     onCancel: (suspend () -> Unit)? = null,
 ) {
     if (!isVisible) return
-    val scope = rememberCoroutineScope()
     val handleDismiss: () -> Unit = {
         if (dismissible) {
             onComplete()
@@ -380,7 +426,12 @@ fun PvzProgressDialog(
                         if (progress >= 1f) {
                             onComplete()
                         } else if (showCancel) {
-                            scope.launch { onCancel?.invoke() }
+                            // 🔴 用与弹窗生命周期解耦的稳定作用域（JsUiManager.uiScope）：
+                            // onCancel 最终走到 JsUiManager.cancelProgress()，它会先 isVisible=false 关弹窗、
+                            // 再 runCatching { progressCancelHandler?.invoke() } 跑 JS 注册的 options.onCancel（用户 JS）。
+                            // 用户 JS 在 scope.launch（进度弹窗的 rememberCoroutineScope）上挂起时弹窗已离场、scope 被 forget，
+                            // resume 即抛 ForgottenCoroutineScopeException。改用 uiScope 彻底规避。
+                            JsUiManager.uiScope.launch { onCancel?.invoke() }
                         }
                     }
                 )

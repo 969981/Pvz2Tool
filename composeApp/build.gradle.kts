@@ -125,6 +125,8 @@ kotlin {
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.kotlinx.json)
             implementation(libs.ktor.client.logging)
+            // Ktor 本地服务器（server 对象：基于 CIO 引擎在应用内启动本地 HTTP 服务器）
+            implementation(libs.ktor.server.cio)
             implementation(libs.hiddenapibypass)
 
         }
@@ -151,6 +153,21 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kaml)
         }
+        // 仪器化单元测试（跑在真机/模拟器上）：./gradlew :composeApp:connectedDebugAndroidTest
+        // 源集目录：composeApp/src/androidInstrumentedTest/kotlin
+        androidInstrumentedTest.dependencies {
+            implementation(libs.kotlin.test)
+            implementation(libs.junit)
+            implementation(libs.androidx.testExt.junit)
+            implementation(libs.androidx.espresso.core)
+            implementation("androidx.test:runner:1.7.0")
+            // 演示 Activity 需要 Compose（承载 JsDialogsHost 以便视频弹窗真正显示在屏幕上）
+            implementation(libs.compose.runtime)
+            implementation(libs.compose.foundation)
+            implementation(libs.compose.material3)
+            implementation(libs.compose.ui)
+            implementation(libs.androidx.activity.compose)
+        }
         all {
             languageSettings.enableLanguageFeature("ContextParameters")
             compilerOptions.freeCompilerArgs.add("-Xexpect-actual-classes")
@@ -171,6 +188,9 @@ android {
         // 版本号 = 当前月.日.迭代次数（如 8 月 6 日第 0 次迭代 → 8.6.0），构建时按系统日期动态生成
         versionCode = dynamicVersionCode
         versionName = dynamicVersionName
+        // 仪器化（on-device / 模拟器）单元测试入口：
+        //   ./gradlew :composeApp:connectedDebugAndroidTest
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     packaging {
         resources {
@@ -194,7 +214,28 @@ android {
         viewBinding = true
         compose = true
     }
+    // 本地 JVM 单元测试（src/androidUnitTest）：让 android.util.Log 等未实现方法返回默认值，
+    // 这样「不依赖 Android 行为的纯逻辑」也能脱离设备快速验证。
+    //   ./gradlew :composeApp:testDebugUnitTest
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
+
+// ──────────────────────────────────────────────────────────────
+// 「一键看效果」的运行方式（演示用 Activity 在 src/androidDebug，不进 release 包）
+//
+// ① 新增 UI 组件演示（日常跑这个，约 15 秒；不含视频/音频）：
+//    弹 PVZ 风格弹窗展示「数量输入框 ±/长按/min-max」与「INFO 限高滚动」
+//    ./gradlew :composeApp:connectedDebugAndroidTest \
+//      -Pandroid.testInstrumentationRunnerArguments.class=io.github.dreammooncai.pvz2tool.UiShowcaseTest
+//
+// ② 完整 JS API 演示（日志 / 视频全屏播放 / 音效 / 跳过工具箱，约 40 秒）：
+//    ./gradlew :composeApp:connectedDebugAndroidTest \
+//      -Pandroid.testInstrumentationRunnerArguments.class=io.github.dreammooncai.pvz2tool.ApiShowcaseTest
+//
+// 想跑全部仪器化测试时，去掉 -Pandroid.testInstrumentationRunnerArguments.class=... 即可。
+// ──────────────────────────────────────────────────────────────
 
 // ============================================================
 // 删除所有 dimen 变体（兼容 configuration cache）

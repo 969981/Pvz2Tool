@@ -203,6 +203,13 @@ enum class SectionType {
     SLIDER,
     /** 文本输入框 */
     INPUT,
+    /**
+     * 数量输入框：`[−] 数值 [+]`，支持长按连续增减，min/max/step 均可配置。
+     *
+     * 与 [SLIDER] 的区别：SLIDER 用拖动定位，本类型用 ± 精确步进，适合「买 3 个」这类数量场景。
+     * 复用 [SectionItem.minValue] / [maxValue] / [step] / [defaultValue] / [valueSuffix]。
+     */
+    NUMBER,
     /** 只读信息展示 */
     INFO
 }
@@ -333,6 +340,23 @@ data class SectionItem(
      * 如 "%"、"倍"、"ms" 等。
      */
     val valueSuffix: String? = null,
+    /**
+     * 仅对 SLIDER 类型生效：是否在滑块下方显示「« − 数值 + »」步进行。
+     *
+     * - 单击 ± 步进 [step]，**长按连续增减**；
+     * - `«` / `»` 一键跳到 [minValue] / [maxValue]；
+     * - 默认 `true`（手写需求：滚动条也要 ± 与最小/最大按钮）。
+     *
+     * ```yaml
+     * - id: volume
+     *   type: SLIDER
+     *   minValue: 0
+     *   maxValue: 100
+     *   step: 5
+     *   showStepButtons: false   # 不想要这排按钮就关掉
+     * ```
+     */
+    val showStepButtons: Boolean = true,
     // ========== INPUT 文本输入字段 ==========
     /**
      * 仅对 INPUT 类型生效：输入框的占位提示文字。
@@ -358,6 +382,20 @@ data class SectionItem(
      * 仅对 INFO 类型生效：信息展示的当前值（通常由 JS 动态更新）。
      */
     val infoValue: String? = null,
+    /**
+     * 仅对 INFO / DESCRIPTION 生效：**最多显示几行**，超出的部分在卡片内滚动查看。
+     *
+     * `null`（默认）= 不限行，卡片随内容无限增高（旧行为）。
+     * 设置后卡片高度锁定为 `maxLines × 行高`，内容超出时可上下滚动——避免一条长信息把整栏推得很长。
+     *
+     * ```yaml
+     * - id: log_info
+     *   type: INFO
+     *   name: "运行日志"
+     *   maxLines: 5      # 只显示 5 行，超出滚动
+     * ```
+     */
+    val maxLines: Int? = null,
     // ========== 动态显隐（所有类型通用） ==========
     /**
      * 可见性判定 JS 表达式：返回真值才渲染该功能项；为空表示始终显示。
@@ -484,6 +522,8 @@ data class Pvz2ToolConfigUI(
     val dialog: Pvz2ToolConfigUIDialog = Pvz2ToolConfigUIDialog(),
     val error: Pvz2ToolConfigUIError = Pvz2ToolConfigUIError(),
     val welcome: Pvz2ToolConfigUIWelcome = Pvz2ToolConfigUIWelcome(),
+    /** 选择/多选弹窗（全选、搜索、数量）文案 */
+    val choiceActions: Pvz2ToolConfigUIChoiceActions = Pvz2ToolConfigUIChoiceActions(),
     val noValidDirTip: String,
     /** 功能属性（背景/音乐/视频等）*/
     val assets: Pvz2ToolConfigUIAssets = Pvz2ToolConfigUIAssets(),
@@ -745,6 +785,23 @@ data class Pvz2ToolConfigUIWelcome(
     val editUserNameTitle: String = "修改用户名",
     /** 编辑用户名输入框提示文字 */
     val editUserNameHint: String = "请输入新的用户名",
+)
+
+// 8. 【选择弹窗】全选 / 搜索 / 数量的文案
+@Serializable
+data class Pvz2ToolConfigUIChoiceActions(
+    /** 标题栏「全选」胶囊按钮文字 */
+    val selectAll: String = "全选",
+    /** 已全选时按钮文字（点击取消全选） */
+    val unselectAll: String = "取消",
+    /** 标题栏「搜索」胶囊按钮文字 */
+    val search: String = "搜索",
+    /** 搜索已展开时按钮文字（点击清空并收起） */
+    val searchClose: String = "关闭",
+    /** 搜索框占位文字 */
+    val searchHint: String = "搜索…",
+    /** 过滤后没有结果时的提示 */
+    val searchEmpty: String = "没有匹配的条目",
 )
 
 // 9. 【功能属性】背景/视频/音乐/权限等路径与开关
