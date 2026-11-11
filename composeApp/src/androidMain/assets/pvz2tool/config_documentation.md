@@ -553,6 +553,31 @@ ui:
   uiVersion:       # UI 版本号
   authorInfo:      # 作者信息
   tutorial:        # 教程内容
+  choiceActions:   # 多选弹窗右上角「全选 / 搜索」等文案
+```
+
+##### 多选弹窗文案（ui.choiceActions）
+
+`ui.multiSelect()` 弹窗右上角的胶囊按钮、搜索框与空结果提示都用这里配置，方便换语言/换措辞：
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `selectAll` | `全选` | 有未选项时「全选」胶囊的文字 |
+| `unselectAll` | `取消` | 已全选时同一个胶囊的文字（点击取消全选） |
+| `search` | `搜索` | 「搜索」胶囊文字 |
+| `searchClose` | `关闭` | 搜索框展开后同一位置显示的文字（点击清空并收起） |
+| `searchHint` | `搜索…` | 搜索框占位文字 |
+| `searchEmpty` | `没有匹配的条目` | 过滤后没有结果时的提示 |
+
+```yaml
+ui:
+  choiceActions:
+    selectAll: "全选"
+    unselectAll: "取消"
+    search: "搜索"
+    searchClose: "关闭"
+    searchHint: "搜索…"
+    searchEmpty: "没有匹配的条目"
 ```
 
 **资源路径 URL、绝对路径与占位符支持说明：**
@@ -1027,3 +1052,26 @@ ui:
     - `{{js: '道具：' + itemIcon }}`（其中 `itemIcon = '{{icon|height=18:sword.png}}'`）→ JS 返回的字符串中含有 `{{icon|...}}` 标签，会被继续解析并渲染为图标。
 
 ---
+
+#### 工具箱集成器（ToolboxIntegratorActivity）
+
+**这是一个独立入口的 Activity**（`android:exported="true"`，强制横屏），不属于主界面流程，
+可从桌面图标长按、其他应用、或 `adb shell am start -n io.github.dreammooncai.pvz2tool/.ToolboxIntegratorActivity` 直接打开。
+
+它有两个用途，同一个界面里完成：
+
+1. **可视化编辑 / 生成 `dream.yml`**
+   - 表单化管理：版本（`versions`）、栏目（`sections`）、功能项（`items`）、悬浮窗按钮（`ui.floatingWindow.items`）、SMF 数据修改、资源文件等；
+   - 支持「简易模式」与「完整模式」两种产物（分别在文件头写入对应注释），
+     简易模式只输出 `simplifiedLaunch` 需要的最小字段；
+   - 写出的文件放到当前工作目录，可直接被工具读取。
+
+2. **把工具箱注入目标游戏 APK**
+   - 把本应用自身 APK（资源包 id `0x66`）当作「新版本」，按适配流程合并进选中的游戏 APK：
+     **dex 合并 / `resources.arsc` 搬移 / AndroidManifest 改写 / res·lib·assets 合并**；
+   - 目标形态**仅支持 APK**（不支持 XAPK/文件夹）；
+   - 产物是**未签名 APK**（命名形如 `<原文件名>_pvz2tool.apk`），需要自行用 MT 管理器等工具签名后安装。
+
+依赖：
+- 配置文件可正常解析（`configReady`）；解析失败时界面仍可打开，但表单会退化为空模板；
+- 文件选择依赖 SAF（通过工具的 `FilePickerManager`），工作目录、待合并 APK 都要手动选择一次。
