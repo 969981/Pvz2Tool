@@ -123,8 +123,39 @@ jobs:
                   raise SystemExit(f"Dependency catalog changed; review fallback: {old}")
               s = s.replace(old, new, 1)
           p.write_text(s, encoding="utf-8")
+          # FloatingX 2.3.7: enableComposeSupport is only defined for FxAppHelper.Builder
+          # (system overlays). These four FxScopeHelper controls attach to Activity contentView.
+          import subprocess
+          root = Path("composeApp/src/androidMain/kotlin/io/github/dreammooncai/pvz2tool/controller")
+          files = {
+              "FloatingBallController.kt": ("018e35478351a50619d9e8d418d2240e3c094e4c", 2),
+              "GeneralFloatingDialogController.kt": ("7daa692ee1feaf01abab554ec2d0d98b9c9da7ff", 1),
+              "JsDialogsFloatingHost.kt": ("af33f2fac9a3c8984f4fabc29dc06a813dd1d7d2", 1),
+          }
+          for name, (expected, count) in files.items():
+              file = root / name
+              actual = subprocess.check_output(["git", "hash-object", str(file)], text=True).strip()
+              if actual != expected:
+                  raise SystemExit(f"Review FloatingX compatibility patch: {name} changed ({actual})")
+              content = file.read_text(encoding="utf-8")
+              imp = "import com.petterp.floatingx.compose.enableComposeSupport\n"
+              call = "            enableComposeSupport()\n"
+              if content.count(imp) != 1 or content.count(call) != count:
+                  raise SystemExit(f"Unexpected scoped Compose setup: {name}")
+              content = content.replace(imp, "").replace(call, "")
+              if name == "FloatingBallController.kt":
+                  old = "            GlobalState.ballControl?.configControl?.setEnableHalfHide(true, false)\n"
+                  if content.count(old) != 1:
+                      raise SystemExit("Unexpected half-hide call")
+                  # The 2.3.7 one-argument overload immediately moves to the edge.
+                  # Keep current restored coordinates: existing init enables half-hide,
+                  # and switchToBall never disables it itself. Re-enable only via
+                  # the existing drag/release handlers, rather than force a new move.
+                  content = content.replace(old, "")
+              file.write_text(content, encoding="utf-8")
           PY
-              git diff -- gradle/libs.versions.toml > release-files/Pvz2Tool-ci-dependencies.patch
+              git diff --check
+              git diff -- gradle/libs.versions.toml composeApp/src/androidMain/kotlin/io/github/dreammooncai/pvz2tool/controller > release-files/Pvz2Tool-ci-dependencies.patch
               chmod +x gradlew
               ./gradlew :composeApp:assembleDebug --no-daemon --no-configuration-cache
               find composeApp -path '*/build/outputs/apk/*' -name '*.apk' -exec cp '{}' release-files/ \;
@@ -175,7 +206,7 @@ jobs:
           Merged commit: $MERGED_SHA
           Source archive commit: $archive_sha
           Latest build attempt: $BUILD_OUTCOME
-          Android CI dependency fallback: FloatingX 2.3.7 and Keight 0.0.07 (see attached patch when present).
+          Android CI dependency fallback: FloatingX 2.3.7 and Keight 0.0.07; scoped Compose and half-hide API compatibility changes are documented in the attached patch. Android runtime behavior has not been validated by CI.
           The source ZIP is unmodified; newly built APKs are attached only after a successful build. Existing APK assets from a prior successful build, if any, are retained."
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release-files/* --clobber
