@@ -1,5 +1,9 @@
 name: PvZ upstream sync and release
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pvz-upstream-sync-release.yml'
   schedule:
     - cron: '23 */6 * * *'
   workflow_dispatch:
