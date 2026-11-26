@@ -47,7 +47,10 @@ jobs:
           incoming="$(git rev-list --count HEAD..FETCH_HEAD)"
           echo "Upstream-only commits: $incoming" >> "$GITHUB_STEP_SUMMARY"
           if [ "$incoming" -gt 0 ]; then
-            git merge --no-edit FETCH_HEAD
+            # Keep fork-owned Actions definitions; GITHUB_TOKEN cannot write workflows.
+            git merge --no-ff --no-commit FETCH_HEAD
+            git restore --source=HEAD --staged --worktree -- .github/workflows
+            git commit -m "chore(sync): import upstream $upstream_sha preserving fork workflows"
             git push origin "HEAD:$GITHUB_REF_NAME"
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
