@@ -64,7 +64,7 @@ jobs:
 
   release:
     needs: sync
-    if: needs.sync.outputs.changed == 'true' || inputs.force_release == true
+    if: needs.sync.outputs.changed == 'true' || inputs.force_release == true || github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -108,8 +108,24 @@ jobs:
               python -m zipfile -c release-files/dotnet-publish.zip "$RUNNER_TEMP/pvz-dotnet"
               ;;
             android)
+              # CI-only fallback to the nearest published versions in Maven Central.
+              # Keep the original version catalog in the upstream source archive.
+              python3 - <<'PY'
+          from pathlib import Path
+          p = Path("gradle/libs.versions.toml")
+          s = p.read_text(encoding="utf-8")
+          for old, new in [
+              ('android-floatingx = "2.3.8"', 'android-floatingx = "2.3.7"'),
+              ('module = "io.github.alexzhirkevich:keight", version = "0.0.08"', 'module = "io.github.alexzhirkevich:keight", version = "0.0.07"'),
+          ]:
+              if s.count(old) != 1:
+                  raise SystemExit(f"Dependency catalog changed; review fallback: {old}")
+              s = s.replace(old, new, 1)
+          p.write_text(s, encoding="utf-8")
+          PY
+              git diff -- gradle/libs.versions.toml > release-files/Pvz2Tool-ci-dependencies.patch
               chmod +x gradlew
-              ./gradlew :composeApp:assembleDebug --no-daemon
+              ./gradlew :composeApp:assembleDebug --no-daemon --no-configuration-cache
               find composeApp -path '*/build/outputs/apk/*' -name '*.apk' -exec cp '{}' release-files/ \;
               test -n "$(find release-files -name '*.apk' -print -quit)"
               ;;
@@ -141,15 +157,33 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-files
-          git archive --format=zip --output="release-files/Pvz2Tool-source.zip" HEAD
           tag="upstream-${UPSTREAM_SHA:0:12}"
+          archive_sha="$MERGED_SHA"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/tags/$tag"
+            archive_sha="$(git rev-parse 'FETCH_HEAD^{commit}')"
+            git merge-base --is-ancestor "$UPSTREAM_SHA" "$archive_sha"
+            git merge-base --is-ancestor "$archive_sha" "$MERGED_SHA"
+            # Existing source archive remains tied to its original immutable tag.
+          fi
+          git archive --format=zip --output="release-files/Pvz2Tool-source.zip" "$archive_sha"
+          if [[ "$BUILD_OUTCOME" != success ]]; then
+            find release-files -maxdepth 1 -name '*.apk' -delete
+          fi
           notes="Source: https://github.com/$UPSTREAM_REPO/commit/$UPSTREAM_SHA
           Merged commit: $MERGED_SHA
-          Build attempt: $BUILD_OUTCOME
-          The source ZIP is always included; binaries are attached only when built successfully."
+          Source archive commit: $archive_sha
+          Latest build attempt: $BUILD_OUTCOME
+          Android CI dependency fallback: FloatingX 2.3.7 and Keight 0.0.07 (see attached patch when present).
+          The source ZIP is unmodified; newly built APKs are attached only after a successful build. Existing APK assets from a prior successful build, if any, are retained."
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release-files/* --clobber
+            gh release edit "$tag" --notes "$notes"
           else
             gh release create "$tag" release-files/* --target "$MERGED_SHA" --title "Pvz2Tool upstream ${UPSTREAM_SHA:0:12}" --notes "$notes"
           fi
           echo "Release: $tag ($BUILD_OUTCOME)" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$BUILD_KIND" == android && "$BUILD_OUTCOME" != success ]]; then
+            echo "::error::APK build failed; source-only release is not a successful binary build."
+            exit 1
+          fi
